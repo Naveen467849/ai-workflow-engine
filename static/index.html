@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Code Review Mini-Agent UI</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 20px auto;
+      padding: 10px;
+    }
+    textarea {
+      width: 100%;
+      height: 250px;
+      font-family: Consolas, monospace;
+      font-size: 14px;
+    }
+    button {
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    .row {
+      margin-top: 10px;
+      margin-bottom: 10px;
+    }
+    .output-box {
+      border: 1px solid #ccc;
+      padding: 10px;
+      margin-top: 10px;
+      background: #f9f9f9;
+      white-space: pre-wrap;
+    }
+    .tag {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: #eee;
+      margin-right: 5px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Code Review Mini-Agent</h1>
+  <p>Paste your Python code below and click <b>Run Analysis</b>.</p>
+
+  <div class="row">
+    <label for="threshold">
+      Quality Threshold (0–1, default 0.8):
+    </label>
+    <input type="number" id="threshold" min="0" max="1" step="0.05" value="0.8">
+  </div>
+
+  <div class="row">
+    <textarea id="code" placeholder="Paste your Python code here..."></textarea>
+  </div>
+
+  <button onclick="runAnalysis()">Run Analysis</button>
+
+  <div id="status" class="row"></div>
+
+  <h2>Results</h2>
+  <div id="results" class="output-box">
+    No results yet.
+  </div>
+
+  <h2>Raw Final State (debug)</h2>
+  <div id="raw" class="output-box">
+    No data yet.
+  </div>
+
+  <script>
+    let exampleGraphId = null;
+
+    async function init() {
+      try {
+        const res = await fetch("/");
+        const data = await res.json();
+        exampleGraphId = data.example_graph_id;
+        document.getElementById("status").innerHTML =
+          '<span class="tag">Backend OK</span> Example graph ID loaded.';
+      } catch (err) {
+        document.getElementById("status").innerText =
+          "Error talking to backend: " + err;
+      }
+    }
+
+    async function runAnalysis() {
+      const code = document.getElementById("code").value;
+      const threshold = parseFloat(
+        document.getElementById("threshold").value || "0.8"
+      );
+
+      if (!code.trim()) {
+        alert("Please paste some Python code first.");
+        return;
+      }
+      if (!exampleGraphId) {
+        alert("Backend not ready yet. Refresh the page.");
+        return;
+      }
+
+      document.getElementById("status").innerHTML =
+        '<span class="tag">Running</span> Analyzing code...';
+
+      try {
+        const body = {
+          graph_id: exampleGraphId,
+          initial_state: {
+            code: code,
+            quality_threshold: threshold
+          }
+        };
+
+        const res = await fetch("/graph/run", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(body)
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          document.getElementById("status").innerHTML =
+            '<span class="tag">Error</span> ' + (data.detail || "Unknown error");
+          return;
+        }
+
+        const finalState = data.final_state || {};
+        const quality = finalState.quality_score;
+        const approved = finalState.approved;
+        const suggestions = finalState.suggestions || [];
+        const issues = finalState.issues || [];
+        const styleWarnings = finalState.style_warnings || [];
+        const missingDocstrings = finalState.missing_docstrings || [];
+        const commentFeedback = finalState.comment_feedback || [];
+
+        let html = "";
+        html += "<p><b>Quality Score:</b> " + (quality != null ? quality.toFixed(3) : "N/A") + "</p>";
+        html += "<p><b>Approved (score ≥ threshold):</b> " + (approved ? "✅ Yes" : "❌ No") + "</p>";
+
+        html += "<h3>Issues</h3>";
+        if (issues.length === 0) {
+          html += "<p>No major issues detected.</p>";
+        } else {
+          html += "<ul>";
+          for (const issue of issues) {
+            html += "<li>" + issue + "</li>";
+          }
+          html += "</ul>";
+        }
+
+        html += "<h3>Style Warnings</h3>";
+        if (styleWarnings.length === 0) {
+          html += "<p>No style warnings.</p>";
+        } else {
+          html += "<ul>";
+          for (const w of styleWarnings) {
+            html += "<li>" + w + "</li>";
+          }
+          html += "</ul>";
+        }
+
+        html += "<h3>Docstring Feedback</h3>";
+        if (missingDocstrings.length === 0 && commentFeedback.length === 0) {
+          html += "<p>No docstring/comment issues.</p>";
+        } else {
+          if (commentFeedback.length > 0) {
+            html += "<ul>";
+            for (const f of commentFeedback) {
+              html += "<li>" + f + "</li>";
+            }
+            html += "</ul>";
+          }
+          if (missingDocstrings.length > 0) {
+            html += "<p>Missing docstrings for: " + missingDocstrings.join(", ") + "</p>";
+          }
+        }
+
+        html += "<h3>Suggestions</h3>";
+        if (suggestions.length === 0) {
+          html += "<p>No suggestions – code looks good!</p>";
+        } else {
+          html += "<ul>";
+          for (const s of suggestions) {
+            html += "<li>" + s + "</li>";
+          }
+          html += "</ul>";
+        }
+
+        document.getElementById("results").innerHTML = html;
+
+        document.getElementById("raw").textContent = JSON.stringify(
+          finalState,
+          null,
+          2
+        );
+
+        document.getElementById("status").innerHTML =
+          '<span class="tag">Done</span> Analysis complete.';
+      } catch (err) {
+        document.getElementById("status").innerHTML =
+          '<span class="tag">Error</span> ' + err;
+      }
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>
